@@ -1,3 +1,4 @@
+from sqlalchemy import case, func
 from sqlalchemy.orm import Session
 from typing import List
 from models.audit_result import AuditResult, AuditResultStatus
@@ -48,3 +49,18 @@ def get_audit_count_by_task_id(
         AuditResult.task_id == task_id,
         AuditResult.status == status
     ).count()
+
+
+def get_audit_status_counts_by_task_id(db: Session, task_id: int) -> dict:
+    """一次查询统计任务下通过/违规数量。"""
+    row = db.query(
+        func.sum(case((AuditResult.status == AuditResultStatus.PASS, 1), else_=0)).label("pass_count"),
+        func.sum(case((AuditResult.status == AuditResultStatus.VIOLATE, 1), else_=0)).label("violate_count"),
+    ).filter(
+        AuditResult.task_id == task_id
+    ).one()
+
+    return {
+        "pass_count": int(row.pass_count or 0),
+        "violate_count": int(row.violate_count or 0),
+    }

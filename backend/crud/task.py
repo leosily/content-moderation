@@ -1,3 +1,4 @@
+from datetime import datetime
 from sqlalchemy.orm import Session
 from typing import List, Optional
 from models.task import Task, TaskStatus
@@ -50,9 +51,52 @@ def get_task_by_id(db: Session, task_id: int, user_id: int, is_admin: bool = Fal
         query = query.filter(Task.user_id == user_id)
     return query.first()
 
-def get_user_tasks(db: Session, user_id: int, skip: int = 0, limit: int = 10) -> List[Task]:
-    """查询用户的所有任务（分页）"""
-    return db.query(Task).filter(Task.user_id == user_id).offset(skip).limit(limit).all()
+def get_user_tasks(
+    db: Session,
+    user_id: int,
+    skip: int = 0,
+    limit: int = 10,
+    status: Optional[TaskStatus] = None,
+    keyword: Optional[str] = None,
+    start_time: Optional[datetime] = None,
+    end_time: Optional[datetime] = None
+) -> List[Task]:
+    """查询用户任务列表（支持分页与可选筛选）"""
+    query = db.query(Task).filter(Task.user_id == user_id)
+
+    if status is not None:
+        query = query.filter(Task.status == status)
+    if keyword:
+        query = query.filter(Task.title.ilike(f"%{keyword.strip()}%"))
+    if start_time is not None:
+        query = query.filter(Task.created_at >= start_time)
+    if end_time is not None:
+        query = query.filter(Task.created_at <= end_time)
+
+    return query.order_by(Task.created_at.desc()).offset(skip).limit(limit).all()
+
+
+def count_user_tasks(
+    db: Session,
+    user_id: int,
+    status: Optional[TaskStatus] = None,
+    keyword: Optional[str] = None,
+    start_time: Optional[datetime] = None,
+    end_time: Optional[datetime] = None
+) -> int:
+    """统计用户任务总数（支持与列表一致的筛选条件）。"""
+    query = db.query(Task).filter(Task.user_id == user_id)
+
+    if status is not None:
+        query = query.filter(Task.status == status)
+    if keyword:
+        query = query.filter(Task.title.ilike(f"%{keyword.strip()}%"))
+    if start_time is not None:
+        query = query.filter(Task.created_at >= start_time)
+    if end_time is not None:
+        query = query.filter(Task.created_at <= end_time)
+
+    return query.count()
 
 def update_task_progress(
     db: Session,

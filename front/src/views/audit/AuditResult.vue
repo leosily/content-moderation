@@ -15,6 +15,25 @@
       <strong>#{{ taskId }}</strong>
     </div>
 
+    <section v-if="!loading" class="summary-grid">
+      <article class="summary-item">
+        <span>结果总数</span>
+        <strong>{{ totalCount }}</strong>
+      </article>
+      <article class="summary-item pass">
+        <span>通过数量</span>
+        <strong>{{ passCount }}</strong>
+      </article>
+      <article class="summary-item violate">
+        <span>违规数量</span>
+        <strong>{{ violateCount }}</strong>
+      </article>
+      <article class="summary-item">
+        <span>违规率</span>
+        <strong>{{ violateRate }}%</strong>
+      </article>
+    </section>
+
     <section v-if="loading" class="state">加载中...</section>
 
     <section v-else class="list">
@@ -63,6 +82,17 @@ const loading = ref(false)
 const results = ref([])
 
 const taskId = computed(() => props.taskId)
+const totalCount = computed(() => results.value.length)
+const passCount = computed(() => {
+  return results.value.filter((item) => String(item?.status || '').includes('通过')).length
+})
+const violateCount = computed(() => {
+  return results.value.filter((item) => String(item?.status || '').includes('违规')).length
+})
+const violateRate = computed(() => {
+  if (!totalCount.value) return 0
+  return ((violateCount.value / totalCount.value) * 100).toFixed(2)
+})
 
 function normalizeResults(res) {
   return (
@@ -100,9 +130,9 @@ function statusClass(status) {
 
 <style scoped>
 .result-wrap {
-  max-width: 1100px;
+  width: min(1400px, calc(100% - clamp(24px, 6vw, 96px)));
   margin: 0 auto;
-  padding: 28px 20px 40px;
+  padding: clamp(20px, 3vw, 36px) 0 clamp(28px, 4vw, 52px);
 }
 .head {
   display: flex;
@@ -114,6 +144,7 @@ function statusClass(status) {
 
 h1 {
   margin: 8px 0 0;
+  font-size: clamp(26px, 2.4vw, 36px);
 }
 
 .badge {
@@ -144,8 +175,44 @@ h1 {
 }
 
 .state {
-  padding: 18px;
+  padding: clamp(16px, 2vw, 22px);
   color: #6b7280;
+}
+
+.summary-grid {
+  margin-top: 12px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+}
+
+.summary-item {
+  border: 1px solid #e8ecfa;
+  border-radius: 12px;
+  background: #fff;
+  padding: 10px 12px;
+}
+
+.summary-item span {
+  display: block;
+  font-size: 12px;
+  color: #6b7280;
+}
+
+.summary-item strong {
+  display: block;
+  margin-top: 6px;
+  font-size: 22px;
+  line-height: 1;
+  color: #111827;
+}
+
+.summary-item.pass {
+  border-color: #bbf7d0;
+}
+
+.summary-item.violate {
+  border-color: #fecaca;
 }
 
 .list {
@@ -162,7 +229,7 @@ h1 {
   border-radius: 14px;
   background: rgba(255, 255, 255, 0.85);
   box-shadow: 0 8px 20px rgba(45, 64, 110, 0.06);
-  padding: 14px;
+  padding: clamp(14px, 1.7vw, 20px);
 }
 
 .item-head {
@@ -204,7 +271,7 @@ h1 {
 
 .item-row {
   display: grid;
-  grid-template-columns: 90px 1fr;
+  grid-template-columns: 110px 1fr;
   gap: 10px;
   margin-top: 8px;
 }
@@ -213,10 +280,10 @@ h1 {
 }
 .label {
   color: #888;
-  font-size: 13px;
+  font-size: clamp(13px, 0.95vw, 15px);
 }
 .value {
-  font-size: 14px;
+  font-size: clamp(14px, 1vw, 16px);
 }
 .pre {
   white-space: pre-wrap;
@@ -225,7 +292,8 @@ h1 {
 button {
   border: none;
   border-radius: 10px;
-  padding: 9px 12px;
+  padding: clamp(9px, 1vw, 12px) clamp(12px, 1.2vw, 16px);
+  font-size: clamp(13px, 1vw, 15px);
   font-weight: 600;
   cursor: pointer;
   transition: all 0.2s ease;
@@ -238,6 +306,13 @@ button {
 
 .ghost-btn:hover {
   background: #e1e7ff;
+}
+
+@media (max-width: 900px) {
+  .result-wrap {
+    width: calc(100% - 24px);
+    padding-top: 16px;
+  }
 }
 
 @media (max-width: 720px) {

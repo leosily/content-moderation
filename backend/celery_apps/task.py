@@ -13,29 +13,51 @@ def audit_text_task(self, task_id: int, contents: list):
     :param contents: 待审核的文本列表（单条任务则长度为1）
     """
     db = SessionLocal()
+    total = len(contents or [])
+    completed = 0
     try:
+        if total == 0:
+            update_task_progress(db, task_id, 0, 0, status=TaskStatus.FAILED)
+            return {"task_id": task_id, "status": "failed", "msg": "no contents"}
+
         # 初始化任务进度（防止Celery重启后进度丢失）
-        update_task_progress(db, task_id, 0, len(contents), status=TaskStatus.PROCESSING)
-        total = len(contents)
-        completed = 0
+        update_task_progress(db, task_id, 0, total, status=TaskStatus.PROCESSING)
         
         # 逐一条审核文本
         for content in contents:
-            # 调用AI审核接口
-            audit_res = text_audit(content)
-            if audit_res["status"] == "failed":
-                # AI接口调用失败，触发重试
-                self.retry(exc=Exception(audit_res["msg"]), countdown=5)
-            
-            # 存储审核结果
-            create_audit_result(
-                db=db,
-                task_id=task_id,
-                content=content,
-                status=audit_res["status"],
-                violate_type=audit_res.get("violate_type"),
-                violate_detail=audit_res.get("violate_detail")
-            )
+            try:
+                # 调用AI审核接口
+                audit_res = text_audit(content)
+                if audit_res["status"] == "failed":
+                    # 单条调用失败时降级为违规结果，避免整批任务中断
+                    create_audit_result(
+                        db=db,
+                        task_id=task_id,
+                        content=content,
+                        status="违规",
+                        violate_type="系统异常",
+                        violate_detail=audit_res.get("msg", "AI审核服务调用失败")
+                    )
+                else:
+                    # 存储审核结果
+                    create_audit_result(
+                        db=db,
+                        task_id=task_id,
+                        content=content,
+                        status=audit_res["status"],
+                        violate_type=audit_res.get("violate_type"),
+                        violate_detail=audit_res.get("violate_detail")
+                    )
+            except Exception as item_exc:
+                # 单条异常兜底，不影响批任务整体完成
+                create_audit_result(
+                    db=db,
+                    task_id=task_id,
+                    content=content,
+                    status="违规",
+                    violate_type="系统异常",
+                    violate_detail=f"处理异常: {item_exc}"
+                )
             
             # 更新进度（每完成1条更新一次）
             completed += 1

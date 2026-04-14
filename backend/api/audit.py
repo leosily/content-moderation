@@ -1,13 +1,11 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-from typing import List
 from database import SessionLocal
-from schemas.audit_result import AuditResultResponse, BatchAuditResponse
-from crud.audit_result import get_audit_results_by_task_id, get_audit_count_by_task_id
+from schemas.audit_result import BatchAuditResponse
+from crud.audit_result import get_audit_results_by_task_id, get_audit_status_counts_by_task_id
 from crud.task import get_task_by_id
 from core.auth import get_current_user
 from models.user import User
-from models.audit_result import AuditResultStatus
 
 
 router = APIRouter()
@@ -39,15 +37,14 @@ def get_audit_results_by_task(
         is_admin=current_user.is_admin
     )
     
-    # 统计通过和违规数量
-    pass_count = get_audit_count_by_task_id(db=db, task_id=task_id, status=AuditResultStatus.PASS)
-    violate_count = get_audit_count_by_task_id(db=db, task_id=task_id, status=AuditResultStatus.VIOLATE)
+    # 统计通过和违规数量（聚合查询）
+    status_counts = get_audit_status_counts_by_task_id(db=db, task_id=task_id)
     
     return {
         "task_id": task_id,
         "total": len(results),
         "completed": len(results),
-        "pass_count": pass_count,
-        "violate_count": violate_count,
+        "pass_count": status_counts["pass_count"],
+        "violate_count": status_counts["violate_count"],
         "results": results
     }

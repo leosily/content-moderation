@@ -69,12 +69,20 @@ export const getTaskDetail = (taskId) => {
 }
 
 // 获取任务列表
-export const getTaskList = (skip = 0, limit = 10) => {
+export const getTaskList = (options = {}) => {
+  const {
+    skip = 0,
+    limit = 10,
+    status,
+    keyword,
+    start_time,
+    end_time
+  } = options
   return request({
     // 后端任务列表是 GET "/"，加斜杠避免 FastAPI 重定向
     url: '/task/',
     method: 'get',
-    params: { skip, limit }
+    params: { skip, limit, status, keyword, start_time, end_time }
   })
 }
 
@@ -82,6 +90,23 @@ export const getTaskList = (skip = 0, limit = 10) => {
 export const getTaskProgress = (taskId) => {
   return request({
     url: `/task/${taskId}/progress`,
+    method: 'get'
+  })
+}
+
+// 首页看板统计数据
+export const getDashboardStats = (days = 7) => {
+  return request({
+    url: '/task/dashboard/stats',
+    method: 'get',
+    params: { days }
+  })
+}
+
+// 任务服务健康状态
+export const getTaskHealth = () => {
+  return request({
+    url: '/task/health',
     method: 'get'
   })
 }

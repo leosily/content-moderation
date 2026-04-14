@@ -13,7 +13,6 @@ class Settings(BaseSettings):
     REDIS_CONFIG: dict = {
         "host": "localhost",
         "port": 6379,
-        "password": "yifeng159132",
         "db": 0
     }
     

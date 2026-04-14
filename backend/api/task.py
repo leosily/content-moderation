@@ -1,17 +1,35 @@
+from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Request
 from sqlalchemy.orm import Session
+from sqlalchemy import case, func
 import csv
 from io import StringIO
-from typing import List
+from typing import Optional
 from database import SessionLocal, redis_client
-from schemas.task import TaskCreateSingle, TaskCreateBatch, TaskResponse, TaskProgressResponse
-from crud.task import create_task_single, create_task_batch, get_task_by_id, get_user_tasks
+from schemas.task import TaskCreateSingle, TaskCreateBatch, TaskResponse, TaskProgressResponse, TaskListResponse
+from crud.task import create_task_single, create_task_batch, get_task_by_id, get_user_tasks, count_user_tasks
 from core.auth import get_current_user
 from models.user import User
+from models.task import Task, TaskStatus
+from models.audit_result import AuditResult, AuditResultStatus
 from celery_apps.task import audit_text_task
 from core.limiter import limiter
 
 router = APIRouter()
+
+MAX_PAGE_LIMIT = 100
+
+
+def _to_int(value, default=0):
+    """将 Redis/DB 返回值安全转换为 int。"""
+    if value is None:
+        return default
+    if isinstance(value, (bytes, bytearray)):
+        value = value.decode("utf-8", errors="ignore")
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
 
 def get_db():
     db = SessionLocal()
@@ -46,19 +64,28 @@ def create_batch_task(
 ):
     """创建批量文本审核任务（CSV文件导入）"""
     # 校验文件格式
-    if not file.filename.endswith(".csv"):
+    if not file.filename or not file.filename.lower().endswith(".csv"):
         raise HTTPException(status_code=400, detail="请上传CSV格式文件")
     
     # 解析CSV文件，提取文本内容
     contents = []
     try:
-        # 读取CSV文件（编码设为utf-8，避免中文乱码）
-        content = file.file.read().decode("utf-8")
+        # 读取CSV文件（兼容 utf-8-sig，避免 BOM 导致首列异常）
+        content = file.file.read().decode("utf-8-sig")
         reader = csv.reader(StringIO(content))
-        # 跳过表头（如果CSV有表头），直接读取内容行
-        for row in reader:
-            if row:  # 跳过空行
-                contents.append(row[0].strip())  # 每行第一个字段作为文本内容
+        for row_index, row in enumerate(reader):
+            if not row:
+                continue
+
+            first_col = row[0].strip()
+            if not first_col:
+                continue
+
+            # 兼容常见表头写法：content/text/文本
+            if row_index == 0 and first_col.lower() in {"content", "text", "文本"}:
+                continue
+
+            contents.append(first_col)  # 每行第一个字段作为文本内容
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"CSV文件解析失败：{str(e)}")
     
@@ -72,27 +99,182 @@ def create_batch_task(
     audit_text_task.delay(task_id=task.id, contents=contents)
     return task
 
-@router.get("/{task_id}", response_model=TaskResponse, tags=["任务管理"])
-def get_task_detail(
-    task_id: int,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    """查询单个任务详情"""
-    task = get_task_by_id(db=db, task_id=task_id, user_id=current_user.id, is_admin=current_user.is_admin)
-    if not task:
-        raise HTTPException(status_code=404, detail="任务不存在或无权限查看")
-    return task
-
-@router.get("/", response_model=List[TaskResponse], tags=["任务管理"])
+@router.get("/", response_model=TaskListResponse, tags=["任务管理"])
 def get_user_task_list(
     skip: int = 0,
     limit: int = 10,
+    status: Optional[TaskStatus] = None,
+    keyword: Optional[str] = None,
+    start_time: Optional[datetime] = None,
+    end_time: Optional[datetime] = None,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """查询当前用户的任务列表（分页）"""
-    return get_user_tasks(db=db, user_id=current_user.id, skip=skip, limit=limit)
+    if skip < 0:
+        raise HTTPException(status_code=400, detail="skip 不能小于 0")
+    if limit <= 0:
+        raise HTTPException(status_code=400, detail="limit 必须大于 0")
+    if start_time and end_time and start_time > end_time:
+        raise HTTPException(status_code=400, detail="start_time 不能晚于 end_time")
+    limit = min(limit, MAX_PAGE_LIMIT)
+    items = get_user_tasks(
+        db=db,
+        user_id=current_user.id,
+        skip=skip,
+        limit=limit,
+        status=status,
+        keyword=keyword,
+        start_time=start_time,
+        end_time=end_time
+    )
+    total = count_user_tasks(
+        db=db,
+        user_id=current_user.id,
+        status=status,
+        keyword=keyword,
+        start_time=start_time,
+        end_time=end_time
+    )
+    return {
+        "items": items,
+        "total": int(total),
+        "skip": int(skip),
+        "limit": int(limit)
+    }
+
+@router.get("/dashboard/stats", tags=["任务管理"])
+def get_dashboard_stats(
+    days: int = 7,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """获取首页看板统计数据（按当前用户）"""
+    if days < 1 or days > 90:
+        raise HTTPException(status_code=400, detail="days 取值范围为 1-90")
+
+    task_base_query = db.query(Task).filter(Task.user_id == current_user.id)
+    total_tasks = task_base_query.count()
+
+    status_counts = db.query(
+        func.sum(case((AuditResult.status == AuditResultStatus.PASS, 1), else_=0)).label("approved_count"),
+        func.sum(case((AuditResult.status == AuditResultStatus.VIOLATE, 1), else_=0)).label("rejected_count"),
+    ).join(
+        Task, Task.id == AuditResult.task_id
+    ).filter(
+        Task.user_id == current_user.id
+    ).one()
+    approved_count = int(status_counts.approved_count or 0)
+    rejected_count = int(status_counts.rejected_count or 0)
+
+    pending_tasks = task_base_query.filter(Task.status.in_([TaskStatus.PENDING, TaskStatus.PROCESSING])).count()
+
+    # 最近 N 天任务趋势
+    end_day = datetime.now().date()
+    start_day = end_day - timedelta(days=days - 1)
+    trend_rows = db.query(
+        func.date(Task.created_at).label("day"),
+        func.count(Task.id).label("task_count")
+    ).filter(
+        Task.user_id == current_user.id,
+        Task.created_at >= start_day
+    ).group_by(
+        func.date(Task.created_at)
+    ).all()
+
+    pass_rows = db.query(
+        func.date(AuditResult.created_at).label("day"),
+        func.count(AuditResult.id).label("pass_count")
+    ).join(
+        Task, Task.id == AuditResult.task_id
+    ).filter(
+        Task.user_id == current_user.id,
+        AuditResult.status == AuditResultStatus.PASS,
+        AuditResult.created_at >= start_day
+    ).group_by(
+        func.date(AuditResult.created_at)
+    ).all()
+
+    day_to_count = {str(row.day): int(row.task_count) for row in trend_rows}
+    day_to_pass = {str(row.day): int(row.pass_count) for row in pass_rows}
+    trend_labels = []
+    task_trend = []
+    pass_trend = []
+
+    for i in range(days):
+        current_day = start_day + timedelta(days=i)
+        day_key = str(current_day)
+        trend_labels.append(current_day.strftime("%m-%d"))
+        task_trend.append(day_to_count.get(day_key, 0))
+
+        pass_trend.append(day_to_pass.get(day_key, 0))
+
+    # 按违规类型统计分布（Top 5）
+    risk_rows = db.query(
+        AuditResult.violate_type,
+        func.count(AuditResult.id).label("count")
+    ).join(
+        Task, Task.id == AuditResult.task_id
+    ).filter(
+        Task.user_id == current_user.id,
+        AuditResult.status == AuditResultStatus.VIOLATE
+    ).group_by(
+        AuditResult.violate_type
+    ).order_by(
+        func.count(AuditResult.id).desc()
+    ).limit(5).all()
+
+    risk_labels = []
+    approval_rate = []
+    total_violates = sum(int(row.count) for row in risk_rows) or 0
+    for row in risk_rows:
+        label = row.violate_type or "未分类"
+        risk_labels.append(label)
+        # 为保持前端兼容沿用 approval_rate 字段，实际返回该类型违规占比
+        rate = round((int(row.count) / total_violates) * 100, 2) if total_violates > 0 else 0
+        approval_rate.append(rate)
+
+    if not risk_labels:
+        risk_labels = ["暂无数据"]
+        approval_rate = [0]
+
+    risk_distribution = [
+        {"name": "通过", "value": int(approved_count)},
+        {"name": "违规", "value": int(rejected_count)},
+        {"name": "待处理", "value": int(pending_tasks)}
+    ]
+
+    return {
+        "metrics": {
+            "total_tasks": int(total_tasks),
+            "approved_count": int(approved_count),
+            "pending_tasks": int(pending_tasks),
+            "rejected_count": int(rejected_count)
+        },
+        "charts": {
+            "task_trend": {
+                "labels": trend_labels,
+                "tasks": task_trend,
+                "approved": pass_trend
+            },
+            "approval_rate": {
+                "labels": risk_labels,
+                "values": approval_rate
+            },
+            "risk_distribution": risk_distribution
+        }
+    }
+
+
+@router.get("/health", tags=["任务管理"])
+def task_service_health(db: Session = Depends(get_db)):
+    """任务服务健康检查。"""
+    try:
+        db.query(func.count(Task.id)).scalar()
+        redis_client.ping()
+        return {"status": "ok"}
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"service unavailable: {exc}")
 
 @router.get("/{task_id}/progress", response_model=TaskProgressResponse, tags=["任务管理"])
 def get_task_progress(
@@ -118,8 +300,8 @@ def get_task_progress(
         }
     
     # 计算进度百分比
-    total = int(progress_data["total"])
-    completed = int(progress_data["completed"])
+    total = _to_int(progress_data.get("total"), default=0)
+    completed = _to_int(progress_data.get("completed"), default=0)
     progress = (completed / total) * 100 if total > 0 else 0
     
     return {
@@ -129,3 +311,16 @@ def get_task_progress(
         "total": total,
         "progress": round(progress, 2)
     }
+
+
+@router.get("/{task_id}", response_model=TaskResponse, tags=["任务管理"])
+def get_task_detail(
+    task_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """查询单个任务详情"""
+    task = get_task_by_id(db=db, task_id=task_id, user_id=current_user.id, is_admin=current_user.is_admin)
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在或无权限查看")
+    return task

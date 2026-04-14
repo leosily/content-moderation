@@ -14,6 +14,21 @@
     <section v-if="loading" class="state">加载中...</section>
 
     <section v-else class="table-card">
+      <div class="filters">
+        <select v-model="statusFilter">
+          <option value="">全部状态</option>
+          <option value="待审核">待审核</option>
+          <option value="审核中">审核中</option>
+          <option value="已完成">已完成</option>
+          <option value="审核失败">审核失败</option>
+        </select>
+        <input v-model.trim="keywordFilter" placeholder="按任务标题搜索" />
+        <input v-model="startTimeFilter" type="datetime-local" />
+        <input v-model="endTimeFilter" type="datetime-local" />
+        <button class="ghost-btn" @click="applyFilters">筛选</button>
+        <button class="ghost-btn" @click="resetFilters">重置</button>
+      </div>
+
       <div v-if="tasks.length === 0" class="state">暂无任务</div>
 
       <div v-else class="table">
@@ -37,27 +52,46 @@
           </div>
         </div>
       </div>
+
+      <div class="pager">
+        <span class="muted">共 {{ total }} 条</span>
+        <button class="ghost-btn" :disabled="page <= 1" @click="changePage(-1)">上一页</button>
+        <span class="muted">第 {{ page }} / {{ totalPages }} 页</span>
+        <button class="ghost-btn" :disabled="page >= totalPages" @click="changePage(1)">下一页</button>
+      </div>
     </section>
   </div>
 </template>
 
 <script setup>
-import { onMounted, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { computed, onMounted, ref } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { getTaskList } from '../../api/user'
 
 const router = useRouter()
+const route = useRoute()
 
 const loading = ref(false)
 const tasks = ref([])
+const total = ref(0)
+const page = ref(1)
+const pageSize = ref(10)
+const statusFilter = ref('')
+const keywordFilter = ref('')
+const startTimeFilter = ref('')
+const endTimeFilter = ref('')
+
+const totalPages = computed(() => {
+  return Math.max(1, Math.ceil((total.value || 0) / pageSize.value))
+})
 
 function normalizeTasks(res) {
   // 兼容不同后端返回字段
   return (
-    res?.tasks ||
-    res?.data?.tasks ||
     res?.items ||
     res?.data?.items ||
+    res?.tasks ||
+    res?.data?.tasks ||
     res?.data ||
     res ||
     []
@@ -67,11 +101,41 @@ function normalizeTasks(res) {
 async function fetchTasks() {
   loading.value = true
   try {
-    const res = await getTaskList(0, 10)
+    const skip = (page.value - 1) * pageSize.value
+    const res = await getTaskList({
+      skip,
+      limit: pageSize.value,
+      status: statusFilter.value || undefined,
+      keyword: keywordFilter.value || undefined,
+      start_time: startTimeFilter.value ? new Date(startTimeFilter.value).toISOString() : undefined,
+      end_time: endTimeFilter.value ? new Date(endTimeFilter.value).toISOString() : undefined
+    })
     tasks.value = normalizeTasks(res)
+    total.value = Number(res?.total ?? res?.data?.total ?? tasks.value.length ?? 0)
   } finally {
     loading.value = false
   }
+}
+
+function applyFilters() {
+  page.value = 1
+  fetchTasks()
+}
+
+function resetFilters() {
+  statusFilter.value = ''
+  keywordFilter.value = ''
+  startTimeFilter.value = ''
+  endTimeFilter.value = ''
+  page.value = 1
+  fetchTasks()
+}
+
+function changePage(delta) {
+  const nextPage = page.value + delta
+  if (nextPage < 1 || nextPage > totalPages.value) return
+  page.value = nextPage
+  fetchTasks()
 }
 
 function goAuditResult(task) {
@@ -98,15 +162,21 @@ function statusClass(status) {
 }
 
 onMounted(() => {
+  if (route.query?.status) {
+    statusFilter.value = String(route.query.status)
+  }
+  if (route.query?.keyword) {
+    keywordFilter.value = String(route.query.keyword)
+  }
   fetchTasks()
 })
 </script>
 
 <style scoped>
 .list-wrap {
-  max-width: 1100px;
+  width: min(1400px, calc(100% - clamp(24px, 6vw, 96px)));
   margin: 0 auto;
-  padding: 28px 20px 40px;
+  padding: clamp(20px, 3vw, 36px) 0 clamp(28px, 4vw, 52px);
 }
 .head {
   display: flex;
@@ -118,6 +188,7 @@ onMounted(() => {
 
 h1 {
   margin: 8px 0 0;
+  font-size: clamp(26px, 2.4vw, 36px);
 }
 
 .badge {
@@ -133,6 +204,7 @@ h1 {
 .actions {
   display: flex;
   gap: 10px;
+  flex-wrap: wrap;
 }
 
 .table-card {
@@ -141,20 +213,37 @@ h1 {
   border-radius: 14px;
   background: rgba(255, 255, 255, 0.85);
   box-shadow: 0 8px 20px rgba(45, 64, 110, 0.06);
-  overflow: hidden;
+  overflow-x: auto;
+}
+
+.filters {
+  display: flex;
+  gap: 10px;
+  padding: 12px;
+  border-bottom: 1px solid #edf1fb;
+  flex-wrap: wrap;
+}
+
+.filters input,
+.filters select {
+  padding: 8px 10px;
+  border: 1px solid #d9e0f2;
+  border-radius: 8px;
+  font-size: 14px;
 }
 
 .table {
   width: 100%;
+  min-width: 760px;
 }
 
 .row {
   display: grid;
-  grid-template-columns: 120px 1.5fr 1fr 170px;
-  padding: 12px;
+  grid-template-columns: 130px 1.5fr 1fr 190px;
+  padding: clamp(12px, 1.2vw, 16px);
   border-top: 1px solid #edf1fb;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
 }
 
 .head-row {
@@ -164,7 +253,7 @@ h1 {
 }
 
 .state {
-  padding: 18px;
+  padding: clamp(16px, 2vw, 22px);
   color: #6b7280;
 }
 
@@ -208,14 +297,24 @@ h1 {
 
 .muted {
   color: #666;
-  font-size: 13px;
+  font-size: clamp(13px, 1vw, 15px);
   margin-top: 6px;
+}
+
+.pager {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 12px;
+  border-top: 1px solid #edf1fb;
 }
 
 button {
   border: none;
   border-radius: 10px;
-  padding: 9px 12px;
+  padding: clamp(9px, 1vw, 12px) clamp(12px, 1.2vw, 16px);
+  font-size: clamp(13px, 1vw, 15px);
   font-weight: 600;
   cursor: pointer;
   transition: all 0.2s ease;
@@ -241,12 +340,13 @@ button {
 }
 
 @media (max-width: 900px) {
-  .row {
-    grid-template-columns: 100px 1fr;
+  .list-wrap {
+    width: calc(100% - 24px);
+    padding-top: 16px;
   }
 
-  .row > div:nth-child(3) {
-    display: none;
+  .table {
+    min-width: 640px;
   }
 }
 </style>

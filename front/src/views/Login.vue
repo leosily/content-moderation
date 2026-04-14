@@ -73,16 +73,16 @@ async function onLogin() {
   min-height: 100vh;
   display: grid;
   place-items: center;
-  padding: 24px;
+  padding: clamp(18px, 3vw, 40px);
 }
 
 .auth-card {
-  width: min(430px, 100%);
+  width: min(560px, 100%);
   background: rgba(255, 255, 255, 0.82);
   border: 1px solid #e8ecfa;
   box-shadow: 0 10px 30px rgba(26, 42, 82, 0.08);
   border-radius: 18px;
-  padding: 28px;
+  padding: clamp(22px, 3vw, 34px);
 }
 
 .badge {
@@ -97,13 +97,13 @@ async function onLogin() {
 
 h1 {
   margin: 0;
-  font-size: 28px;
+  font-size: clamp(28px, 2.8vw, 40px);
 }
 
 .sub {
   margin: 8px 0 18px;
   color: #6b7280;
-  font-size: 14px;
+  font-size: clamp(14px, 1.2vw, 17px);
 }
 
 .auth-form {
@@ -116,15 +116,15 @@ label {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  font-size: 13px;
+  font-size: clamp(13px, 1vw, 15px);
   color: #4b5563;
 }
 
 .auth-form input {
   border: 1px solid #d9e0f2;
   border-radius: 10px;
-  padding: 10px 12px;
-  font-size: 14px;
+  padding: clamp(10px, 1.1vw, 13px) clamp(12px, 1.2vw, 15px);
+  font-size: clamp(14px, 1vw, 16px);
   outline: none;
 }
 
@@ -139,9 +139,9 @@ label {
   border-radius: 10px;
   background: linear-gradient(135deg, #4f46e5, #2563eb);
   color: #fff;
-  font-size: 14px;
+  font-size: clamp(14px, 1.05vw, 16px);
   font-weight: 600;
-  padding: 11px;
+  padding: clamp(11px, 1.2vw, 14px);
   cursor: pointer;
   transition: all 0.2s ease;
 }
@@ -153,7 +153,7 @@ label {
 
 .auth-tip {
   margin-top: 14px;
-  font-size: 13px;
+  font-size: clamp(13px, 1vw, 15px);
   color: #6b7280;
 }
 

@@ -14,7 +14,6 @@ Base = declarative_base()
 redis_client = redis.Redis(
     host=settings.REDIS_CONFIG["host"],
     port=settings.REDIS_CONFIG["port"],
-    password=settings.REDIS_CONFIG["password"],
     db=settings.REDIS_CONFIG["db"],
     decode_responses=True 
 )

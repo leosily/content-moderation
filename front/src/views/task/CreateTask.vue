@@ -84,9 +84,9 @@ async function createBatch() {
 
 <style scoped>
 .create-wrap {
-  max-width: 1100px;
+  width: min(1400px, calc(100% - clamp(24px, 6vw, 96px)));
   margin: 0 auto;
-  padding: 28px 20px 40px;
+  padding: clamp(20px, 3vw, 36px) 0 clamp(28px, 4vw, 52px);
 }
 
 .top {
@@ -110,6 +110,7 @@ async function createBatch() {
 
 h1 {
   margin: 8px 0 0;
+  font-size: clamp(26px, 2.4vw, 36px);
 }
 
 .top-actions {
@@ -120,7 +121,7 @@ h1 {
 
 .card {
   margin: 16px 0;
-  padding: 20px;
+  padding: clamp(18px, 2vw, 24px);
   border: 1px solid #e8ecfa;
   border-radius: 16px;
   background: rgba(255, 255, 255, 0.85);
@@ -138,18 +139,18 @@ h1 {
 
 textarea {
   width: 100%;
-  padding: 10px 12px;
+  padding: clamp(10px, 1vw, 13px) clamp(12px, 1.2vw, 15px);
   border: 1px solid #d9e0f2;
   border-radius: 10px;
-  font-size: 14px;
+  font-size: clamp(14px, 1vw, 16px);
   outline: none;
   min-height: 120px;
 }
 
 .card input {
   width: 100%;
-  padding: 10px 12px;
-  font-size: 14px;
+  padding: clamp(10px, 1vw, 13px) clamp(12px, 1.2vw, 15px);
+  font-size: clamp(14px, 1vw, 16px);
   border: 1px solid #d9e0f2;
   border-radius: 10px;
   outline: none;
@@ -167,7 +168,8 @@ textarea:focus {
 
 button {
   margin-top: 12px;
-  padding: 10px 14px;
+  padding: clamp(10px, 1vw, 13px) clamp(14px, 1.3vw, 18px);
+  font-size: clamp(14px, 1vw, 16px);
   border: none;
   border-radius: 10px;
   font-weight: 600;
@@ -201,8 +203,15 @@ button:disabled {
 
 .tip {
   margin-top: 4px;
-  font-size: 13px;
+  font-size: clamp(13px, 0.95vw, 15px);
   color: #6b7280;
+}
+
+@media (max-width: 900px) {
+  .create-wrap {
+    width: calc(100% - 24px);
+    padding-top: 16px;
+  }
 }
 
 @media (min-width: 960px) {

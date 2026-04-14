@@ -34,6 +34,13 @@ class TaskResponse(BaseModel):
         class Config:
             orm_mode = True
 
+
+class TaskListResponse(BaseModel):
+    items: List[TaskResponse]
+    total: int
+    skip: int
+    limit: int
+
 # 任务进度响应模型
 class TaskProgressResponse(BaseModel):
     task_id: int
