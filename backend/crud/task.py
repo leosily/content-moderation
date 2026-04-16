@@ -2,6 +2,7 @@ from datetime import datetime
 from sqlalchemy.orm import Session
 from typing import List, Optional
 from models.task import Task, TaskStatus
+from models.audit_result import AuditResult
 from schemas.task import TaskCreateSingle, TaskCreateBatch
 from database import redis_client
 
@@ -18,10 +19,13 @@ def create_task_single(db: Session, task_in: TaskCreateSingle, user_id: int) -> 
     db.commit()
     db.refresh(db_task)
     # 初始化Redis任务进度
-    redis_client.hset(
-        f"task_progress_{db_task.id}",
-        mapping={"completed": 0, "total": 1, "status": TaskStatus.PROCESSING.value}
-    )
+    progress_key = f"task_progress_{db_task.id}"
+    pipe = redis_client.pipeline()
+    # 兼容旧版 Redis：HSET 一次只支持一个 field/value
+    pipe.hset(progress_key, "completed", 0)
+    pipe.hset(progress_key, "total", 1)
+    pipe.hset(progress_key, "status", TaskStatus.PROCESSING.value)
+    pipe.execute()
     return db_task
 
 def create_task_batch(db: Session, task_in: TaskCreateBatch, user_id: int) -> Task:
@@ -38,10 +42,13 @@ def create_task_batch(db: Session, task_in: TaskCreateBatch, user_id: int) -> Ta
     db.commit()
     db.refresh(db_task)
     # 初始化Redis任务进度
-    redis_client.hset(
-        f"task_progress_{db_task.id}",
-        mapping={"completed": 0, "total": total, "status": TaskStatus.PROCESSING.value}
-    )
+    progress_key = f"task_progress_{db_task.id}"
+    pipe = redis_client.pipeline()
+    # 兼容旧版 Redis：HSET 一次只支持一个 field/value
+    pipe.hset(progress_key, "completed", 0)
+    pipe.hset(progress_key, "total", total)
+    pipe.hset(progress_key, "status", TaskStatus.PROCESSING.value)
+    pipe.execute()
     return db_task
 
 def get_task_by_id(db: Session, task_id: int, user_id: int, is_admin: bool = False) -> Optional[Task]:
@@ -50,6 +57,48 @@ def get_task_by_id(db: Session, task_id: int, user_id: int, is_admin: bool = Fal
     if not is_admin:
         query = query.filter(Task.user_id == user_id)
     return query.first()
+
+def get_task_by_id_internal(db: Session, task_id: int) -> Optional[Task]:
+    """根据ID查询任务（内部使用，不校验用户权限）。"""
+    return db.query(Task).filter(Task.id == task_id).first()
+
+def cancel_task(db: Session, task_id: int) -> Optional[Task]:
+    """撤销任务（仅将状态置为已撤销，不删除数据）。"""
+    db_task = get_task_by_id_internal(db=db, task_id=task_id)
+    if not db_task:
+        return None
+
+    db_task.status = TaskStatus.CANCELLED
+    progress_key = f"task_progress_{db_task.id}"
+    pipe = redis_client.pipeline()
+    pipe.hset(progress_key, "completed", db_task.completed_count)
+    pipe.hset(progress_key, "total", db_task.total_count)
+    pipe.hset(progress_key, "status", TaskStatus.CANCELLED.value)
+    pipe.execute()
+    db.commit()
+    db.refresh(db_task)
+    return db_task
+
+def is_task_cancelled(db: Session, task_id: int) -> bool:
+    """判断任务是否已被撤销。"""
+    db_task = get_task_by_id_internal(db=db, task_id=task_id)
+    return bool(db_task and db_task.status == TaskStatus.CANCELLED)
+
+def delete_task_record(db: Session, task_id: int) -> bool:
+    """删除任务记录及其关联审核结果、缓存进度。"""
+    db_task = get_task_by_id_internal(db=db, task_id=task_id)
+    if not db_task:
+        return False
+
+    # 避免删除审核中任务导致异步任务写入孤儿记录
+    if db_task.status == TaskStatus.PROCESSING:
+        raise ValueError("任务审核中，暂不支持删除")
+
+    db.query(AuditResult).filter(AuditResult.task_id == task_id).delete(synchronize_session=False)
+    db.delete(db_task)
+    redis_client.delete(f"task_progress_{task_id}")
+    db.commit()
+    return True
 
 def get_user_tasks(
     db: Session,
@@ -109,6 +158,9 @@ def update_task_progress(
     db_task = db.query(Task).filter(Task.id == task_id).first()
     if not db_task:
         return None
+    # 已撤销任务不再接受异步进度更新，避免被 Celery 覆盖状态
+    if db_task.status == TaskStatus.CANCELLED and status != TaskStatus.CANCELLED:
+        return db_task
     # 更新进度
     db_task.completed_count = completed
     db_task.total_count = total
@@ -116,10 +168,13 @@ def update_task_progress(
     if status:
         db_task.status = status
     # 同步更新Redis进度
-    redis_client.hset(
-        f"task_progress_{db_task.id}",
-        mapping={"completed": completed, "total": total, "status": status.value if status else db_task.status.value}
-    )
+    progress_key = f"task_progress_{db_task.id}"
+    pipe = redis_client.pipeline()
+    # 兼容旧版 Redis：HSET 一次只支持一个 field/value
+    pipe.hset(progress_key, "completed", completed)
+    pipe.hset(progress_key, "total", total)
+    pipe.hset(progress_key, "status", status.value if status else db_task.status.value)
+    pipe.execute()
     db.commit()
     db.refresh(db_task)
     return db_task

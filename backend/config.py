@@ -23,6 +23,8 @@ class Settings(BaseSettings):
     # 百度智能云AI接口配置
     AI_CONFIG: dict = {
         "access_token": "your-baidu-ai-access-token",  # 手动获取或用SDK获取
+        "authorization": "Bearer bce-v3/ALTAK-aT0WpQ6nZOM0lSEf4lmXT/ffc0b4411b30bce5cde68b88e4c8755412995db4",  # 兼容示例中的 Authorization 头写法（可留空）
+        "strategy_id": "1",   # 可选：命中百度侧自定义策略
         "audit_url": "https://aip.baidubce.com/rest/2.0/solution/v1/text_censor/v2/user_defined"
     }
     

@@ -8,16 +8,32 @@ def text_audit(content: str) -> dict:
     """
     try:
         # 百度AI文本审核接口参数
+        ai_config = settings.AI_CONFIG or {}
         url = settings.AI_CONFIG["audit_url"]
-        params = {
-            "access_token": settings.AI_CONFIG["access_token"],
+        #access_token = str(ai_config.get("access_token") or "").strip()
+        authorization = str(ai_config.get("authorization") or "").strip()
+        strategy_id = ai_config.get("strategy_id")
+
+        query_params = {}
+        """if access_token:
+            query_params["access_token"] = access_token"""
+
+        payload = {
             "text": content,
             "confidence": 90  # 置信度阈值，高于90判定为违规
         }
-        headers = {"Content-Type": "application/x-www-form-urlencoded"}
+        if strategy_id not in (None, ""):
+            payload["strategyId"] = str(strategy_id)
+
+        headers = {
+            "Content-Type": "application/x-www-form-urlencoded",
+            "Accept": "application/json"
+        }
+        if authorization:
+            headers["Authorization"] = authorization
         
         # 发送POST请求调用API
-        response = requests.post(url, headers=headers, data=params, timeout=10)
+        response = requests.post(url, params=query_params, headers=headers, data=payload, timeout=10)
         response.raise_for_status()  # 抛出HTTP请求异常
         result = response.json()
         

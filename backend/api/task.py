@@ -7,7 +7,7 @@ from io import StringIO
 from typing import Optional
 from database import SessionLocal, redis_client
 from schemas.task import TaskCreateSingle, TaskCreateBatch, TaskResponse, TaskProgressResponse, TaskListResponse
-from crud.task import create_task_single, create_task_batch, get_task_by_id, get_user_tasks, count_user_tasks
+from crud.task import create_task_single, create_task_batch, get_task_by_id, get_user_tasks, count_user_tasks, cancel_task, delete_task_record
 from core.auth import get_current_user
 from models.user import User
 from models.task import Task, TaskStatus
@@ -153,7 +153,13 @@ def get_dashboard_stats(
     if days < 1 or days > 90:
         raise HTTPException(status_code=400, detail="days 取值范围为 1-90")
 
-    task_base_query = db.query(Task).filter(Task.user_id == current_user.id)
+    # 统计口径统一排除已撤销任务（兼容不同历史存储值）
+    task_base_query = db.query(Task).filter(
+        Task.user_id == current_user.id,
+        Task.status != TaskStatus.CANCELLED,
+        Task.status != "已撤销",
+        Task.status != "CANCELLED"
+    )
     total_tasks = task_base_query.count()
 
     status_counts = db.query(
@@ -177,7 +183,10 @@ def get_dashboard_stats(
         func.count(Task.id).label("task_count")
     ).filter(
         Task.user_id == current_user.id,
-        Task.created_at >= start_day
+        Task.created_at >= start_day,
+        Task.status != TaskStatus.CANCELLED,
+        Task.status != "已撤销",
+        Task.status != "CANCELLED"
     ).group_by(
         func.date(Task.created_at)
     ).all()
@@ -189,6 +198,9 @@ def get_dashboard_stats(
         Task, Task.id == AuditResult.task_id
     ).filter(
         Task.user_id == current_user.id,
+        Task.status != TaskStatus.CANCELLED,
+        Task.status != "已撤销",
+        Task.status != "CANCELLED",
         AuditResult.status == AuditResultStatus.PASS,
         AuditResult.created_at >= start_day
     ).group_by(
@@ -324,3 +336,46 @@ def get_task_detail(
     if not task:
         raise HTTPException(status_code=404, detail="任务不存在或无权限查看")
     return task
+
+
+@router.post("/{task_id}/cancel", response_model=TaskResponse, tags=["任务管理"])
+def cancel_user_task(
+    task_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """撤销任务（仅支持待审核/审核中）。"""
+    task = get_task_by_id(db=db, task_id=task_id, user_id=current_user.id, is_admin=current_user.is_admin)
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在或无权限操作")
+
+    if task.status == TaskStatus.CANCELLED:
+        raise HTTPException(status_code=400, detail="任务已撤销，无需重复操作")
+    if task.status in (TaskStatus.COMPLETED, TaskStatus.FAILED):
+        raise HTTPException(status_code=400, detail="当前状态不支持撤销")
+
+    cancelled_task = cancel_task(db=db, task_id=task_id)
+    if not cancelled_task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return cancelled_task
+
+
+@router.delete("/{task_id}", tags=["任务管理"])
+def delete_user_task(
+    task_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """删除任务记录（含关联审核结果）。"""
+    task = get_task_by_id(db=db, task_id=task_id, user_id=current_user.id, is_admin=current_user.is_admin)
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在或无权限操作")
+
+    try:
+        deleted = delete_task_record(db=db, task_id=task_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    if not deleted:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return {"message": "任务删除成功", "task_id": task_id}

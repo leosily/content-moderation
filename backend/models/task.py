@@ -10,6 +10,7 @@ class TaskStatus(str, enum.Enum):
     PROCESSING = "审核中"
     COMPLETED = "已完成"
     FAILED = "审核失败"
+    CANCELLED = "已撤销"
 
 class Task(Base):
     __tablename__ = "tasks"

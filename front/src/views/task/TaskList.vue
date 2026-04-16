@@ -21,6 +21,7 @@
           <option value="审核中">审核中</option>
           <option value="已完成">已完成</option>
           <option value="审核失败">审核失败</option>
+          <option value="已撤销">已撤销</option>
         </select>
         <input v-model.trim="keywordFilter" placeholder="按任务标题搜索" />
         <input v-model="startTimeFilter" type="datetime-local" />
@@ -49,6 +50,22 @@
           <div class="muted">{{ t.created_at || '-' }}</div>
           <div>
             <button class="ghost-btn" @click="goAuditResult(t)">查看审核结果</button>
+            <button
+              v-if="canCancel(t)"
+              class="danger-btn"
+              :disabled="cancellingTaskId === getTaskId(t)"
+              @click="handleCancelTask(t)"
+            >
+              {{ cancellingTaskId === getTaskId(t) ? '撤销中...' : '撤销任务' }}
+            </button>
+            <button
+              v-if="canDelete(t)"
+              class="danger-btn"
+              :disabled="deletingTaskId === getTaskId(t)"
+              @click="handleDeleteTask(t)"
+            >
+              {{ deletingTaskId === getTaskId(t) ? '删除中...' : '删除任务' }}
+            </button>
           </div>
         </div>
       </div>
@@ -66,7 +83,7 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { getTaskList } from '../../api/user'
+import { cancelTask, deleteTask, getTaskList } from '../../api/user'
 
 const router = useRouter()
 const route = useRoute()
@@ -80,6 +97,8 @@ const statusFilter = ref('')
 const keywordFilter = ref('')
 const startTimeFilter = ref('')
 const endTimeFilter = ref('')
+const cancellingTaskId = ref(null)
+const deletingTaskId = ref(null)
 
 const totalPages = computed(() => {
   return Math.max(1, Math.ceil((total.value || 0) / pageSize.value))
@@ -139,9 +158,57 @@ function changePage(delta) {
 }
 
 function goAuditResult(task) {
-  const taskId = task?.id || task?.task_id || task?.taskId
+  const taskId = getTaskId(task)
   if (!taskId) return
   router.push(`/audit/result/${taskId}`)
+}
+
+function getTaskId(task) {
+  return task?.id || task?.task_id || task?.taskId
+}
+
+function canCancel(task) {
+  const status = String(task?.status || task?.state || '')
+  return status.includes('待审核') || status.includes('审核中')
+}
+
+function canDelete(task) {
+  const status = String(task?.status || task?.state || '')
+  return !status.includes('审核中')
+}
+
+async function handleCancelTask(task) {
+  const taskId = getTaskId(task)
+  if (!taskId) return
+
+  if (typeof window !== 'undefined' && !window.confirm(`确定撤销任务 #${taskId} 吗？`)) {
+    return
+  }
+
+  cancellingTaskId.value = taskId
+  try {
+    await cancelTask(taskId)
+    await fetchTasks()
+  } finally {
+    cancellingTaskId.value = null
+  }
+}
+
+async function handleDeleteTask(task) {
+  const taskId = getTaskId(task)
+  if (!taskId) return
+
+  if (typeof window !== 'undefined' && !window.confirm(`确定删除任务 #${taskId} 吗？删除后不可恢复。`)) {
+    return
+  }
+
+  deletingTaskId.value = taskId
+  try {
+    await deleteTask(taskId)
+    await fetchTasks()
+  } finally {
+    deletingTaskId.value = null
+  }
 }
 
 function formatProgress(t) {
@@ -158,6 +225,7 @@ function statusClass(status) {
   if (s.includes('完成')) return 'ok'
   if (s.includes('审核中')) return 'processing'
   if (s.includes('失败')) return 'error'
+  if (s.includes('撤销')) return 'cancelled'
   return 'pending'
 }
 
@@ -290,6 +358,11 @@ h1 {
   color: #b91c1c;
 }
 
+.status-pill.cancelled {
+  background: #fef3c7;
+  color: #92400e;
+}
+
 .status-pill.pending {
   background: #f3f4f6;
   color: #4b5563;
@@ -330,8 +403,18 @@ button {
   color: #374151;
 }
 
+.danger-btn {
+  margin-left: 8px;
+  background: #fee2e2;
+  color: #b91c1c;
+}
+
 .ghost-btn:hover {
   background: #e1e7ff;
+}
+
+.danger-btn:hover {
+  background: #fecaca;
 }
 
 .primary-btn:hover {

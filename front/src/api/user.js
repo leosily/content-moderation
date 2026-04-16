@@ -94,6 +94,22 @@ export const getTaskProgress = (taskId) => {
   })
 }
 
+// 撤销任务（仅支持待审核/审核中）
+export const cancelTask = (taskId) => {
+  return request({
+    url: `/task/${taskId}/cancel`,
+    method: 'post'
+  })
+}
+
+// 删除任务记录（含关联审核结果）
+export const deleteTask = (taskId) => {
+  return request({
+    url: `/task/${taskId}`,
+    method: 'delete'
+  })
+}
+
 // 首页看板统计数据
 export const getDashboardStats = (days = 7) => {
   return request({

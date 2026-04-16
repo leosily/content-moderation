@@ -5,6 +5,16 @@ from models.audit_result import AuditResult, AuditResultStatus
 from models.task import TaskStatus, Task
 from .task import update_task_progress
 
+def _normalize_audit_status(status: str) -> AuditResultStatus:
+    """兼容英文/中文状态入参并转换为 AuditResultStatus。"""
+    raw = str(status or "").strip()
+    upper = raw.upper()
+    if upper == "PASS" or raw == "通过":
+        return AuditResultStatus.PASS
+    if upper == "VIOLATE" or raw == "违规":
+        return AuditResultStatus.VIOLATE
+    raise ValueError(f"unsupported audit status: {status}")
+
 def create_audit_result(
     db: Session,
     task_id: int,
@@ -14,10 +24,11 @@ def create_audit_result(
     violate_detail: str = None
 ) -> AuditResult:
     """创建审核结果"""
+    normalized_status = _normalize_audit_status(status)
     db_audit = AuditResult(
         task_id=task_id,
         content=content,
-        status=AuditResultStatus(status),
+        status=normalized_status,
         violate_type=violate_type,
         violate_detail=violate_detail
     )

@@ -1,6 +1,7 @@
 import pydantic
 from pydantic import BaseModel, Field
 from typing import List, Optional
+from datetime import datetime
 from models.task import TaskStatus
 
 _PYDANTIC_V2 = int(pydantic.VERSION.split(".", 1)[0]) >= 2
@@ -23,7 +24,7 @@ class TaskResponse(BaseModel):
     title: str
     content_type: str
     status: TaskStatus
-    created_at: str  # 时间格式化输出
+    created_at: datetime
     total_count: int
     completed_count: int
     user_id: int

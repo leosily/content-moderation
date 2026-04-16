@@ -1,9 +1,10 @@
 from .celery_app import celery_app
 from crud.audit_result import create_audit_result
-from crud.task import update_task_progress
+from crud.task import update_task_progress, is_task_cancelled
 from core.ai_client import text_audit
 from database import SessionLocal
 from models.task import TaskStatus
+from models.user import User  # noqa: F401  # 确保 users 表模型在 Celery 进程中完成注册
 
 @celery_app.task(bind=True, max_retries=3)
 def audit_text_task(self, task_id: int, contents: list):
@@ -20,11 +21,16 @@ def audit_text_task(self, task_id: int, contents: list):
             update_task_progress(db, task_id, 0, 0, status=TaskStatus.FAILED)
             return {"task_id": task_id, "status": "failed", "msg": "no contents"}
 
+        if is_task_cancelled(db, task_id):
+            return {"task_id": task_id, "status": "cancelled", "msg": "task cancelled before processing"}
+
         # 初始化任务进度（防止Celery重启后进度丢失）
         update_task_progress(db, task_id, 0, total, status=TaskStatus.PROCESSING)
         
         # 逐一条审核文本
         for content in contents:
+            if is_task_cancelled(db, task_id):
+                return {"task_id": task_id, "status": "cancelled", "total": total, "completed": completed}
             try:
                 # 调用AI审核接口
                 audit_res = text_audit(content)
@@ -63,13 +69,21 @@ def audit_text_task(self, task_id: int, contents: list):
             completed += 1
             update_task_progress(db, task_id, completed, total)
         
+        if is_task_cancelled(db, task_id):
+            return {"task_id": task_id, "status": "cancelled", "total": total, "completed": completed}
+
         # 所有文本审核完成，更新任务状态为已完成
         update_task_progress(db, task_id, total, total, status=TaskStatus.COMPLETED)
         return {"task_id": task_id, "status": "completed", "total": total, "completed": completed}
     
     except Exception as e:
-        # 任务执行失败，更新任务状态为审核失败
-        update_task_progress(db, task_id, completed, total, status=TaskStatus.FAILED)
+        # 任务执行失败时先回滚，避免会话处于 PendingRollback 状态
+        db.rollback()
+        # 尝试更新任务状态为审核失败（若再次失败则忽略，保留原始异常）
+        try:
+            update_task_progress(db, task_id, completed, total, status=TaskStatus.FAILED)
+        except Exception:
+            db.rollback()
         raise e  # 抛出异常，Celery记录失败日志
     finally:
         db.close()  # 关闭数据库连接
